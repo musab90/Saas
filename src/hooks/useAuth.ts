@@ -55,83 +55,21 @@ export const useSuperAdminAuth = () => {
       console.log('API response:', data);
 
       // Check if the response indicates failure
-      if (data.success === false || data.error) {
-        throw new Error(data.message || data.error || 'Superadmin login failed');
+      if (data.success === false) {
+        throw new Error(data.message || 'Superadmin login failed');
       }
 
-      // Try to extract user and token from various possible response formats
+      // Extract user and token from the response
       let user, token;
 
-      // Format 1: Standard Node.js/Express response { success: true, data: { user, token } }
+      // Check if we have the expected response format with data
       if (data.data && data.data.user && data.data.token) {
         user = data.data.user;
         token = data.data.token;
         console.log('Login successful (standard format), storing user data:', user);
-      }
-      // Format 2: Direct response { user, token }
-      else if (data.user && data.token) {
-        user = data.user;
-        token = data.token;
-        console.log('Login successful (direct format), storing user data:', user);
-      }
-      // Format 3: JWT with user { user, accessToken } or { user, jwt }
-      else if (data.user && (data.accessToken || data.jwt)) {
-        user = data.user;
-        token = data.accessToken || data.jwt;
-        console.log('Login successful (JWT format), storing user data:', user);
-      }
-      // Format 4: Prisma user with different token field names
-      else if ((data.admin || data.superadmin) && (data.token || data.accessToken || data.jwt)) {
-        user = data.admin || data.superadmin;
-        token = data.token || data.accessToken || data.jwt;
-        console.log('Login successful (admin format), storing user data:', user);
-      }
-      // Format 5: Check for Prisma model naming (User model)
-      else if (data.User && data.token) {
-        user = data.User;
-        token = data.token;
-        console.log('Login successful (Prisma User model), storing user data:', user);
-      }
-      // Format 6: Check for nested response with different structure
-      else if (data.result && data.result.user && data.result.token) {
-        user = data.result.user;
-        token = data.result.token;
-        console.log('Login successful (nested result), storing user data:', user);
-      }
-      // Format 7: Check for response with message and data
-      else if (data.message && data.user && data.token) {
-        user = data.user;
-        token = data.token;
-        console.log('Login successful (message format), storing user data:', user);
-      }
-      // Format 8: Token-only response (decode user from JWT)
-      else if (data.token && !data.user) {
-        token = data.token;
-        console.log('Login successful (token-only format), decoding user from JWT');
-        
-        // Decode JWT to extract user information
-        try {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          user = {
-            id: payload.id,
-            email: payload.email,
-            name: payload.name || payload.email,
-            role: payload.role || 'superadmin'
-          };
-          console.log('Decoded user from JWT:', user);
-        } catch (jwtError) {
-          console.error('Error decoding JWT:', jwtError);
-          // Create a minimal user object if JWT decoding fails
-          user = {
-            id: 'unknown',
-            email: 'unknown@example.com',
-            name: 'Superadmin',
-            role: 'superadmin'
-          };
-        }
-      }
-      else {
-        console.error('Unknown response format from Node.js/Prisma backend:', data);
+      } else {
+        // If the response doesn't match the expected format, try to extract from any structure
+        console.error('Unexpected response format from backend:', data);
         console.error('Available keys in response:', Object.keys(data));
         
         // Try to find token and user anywhere in the response (fallback)
@@ -177,9 +115,25 @@ export const useSuperAdminAuth = () => {
           return null;
         };
         
-        const foundToken = findToken(data);
-        const foundUser = findUser(data);
+        const foundToken = findToken(data as any);
+        let foundUser = findUser(data as any);
         
+        // If only token is found, try decoding JWT to construct user
+        if (foundToken && !foundUser) {
+          try {
+            const payload = JSON.parse(atob(foundToken.split('.')[1]));
+            foundUser = {
+              id: payload.id || payload.userId || payload.sub || 'unknown',
+              email: payload.email || payload.username || 'unknown@example.com',
+              name: payload.name || payload.email || payload.username || 'Superadmin',
+              role: payload.role || 'superadmin'
+            };
+            console.log('Decoded user from JWT (fallback):', foundUser);
+          } catch (jwtError) {
+            console.error('Error decoding JWT in fallback:', jwtError);
+          }
+        }
+
         if (foundToken && foundUser) {
           console.log('Fallback extraction successful!');
           console.log('Found token:', foundToken.substring(0, 20) + '...');
@@ -199,18 +153,25 @@ export const useSuperAdminAuth = () => {
         throw new Error('Invalid response: missing user or token');
       }
 
-      // Ensure user has required fields
-      if (!user.id || !user.email) {
-        console.error('User object missing required fields:', user);
+      // Normalize user fields before enforcing required fields
+      const normalizedUser: any = {
+        id: (user as any).id || (user as any)._id || (user as any).userId || (user as any).uid,
+        email: (user as any).email || (user as any).emailAddress || (user as any).username,
+        name: (user as any).name || (user as any).fullName || (user as any).email || (user as any).username,
+        role: (user as any).role || 'superadmin',
+      };
+
+      if (!normalizedUser.id || !normalizedUser.email) {
+        console.error('User object missing required fields after normalization:', user);
         throw new Error('Invalid user data: missing id or email');
       }
 
       // Store auth data in localStorage with superadmin prefix
       localStorage.setItem('superadmin_token', token);
-      localStorage.setItem('superadmin_user', JSON.stringify(user));
+      localStorage.setItem('superadmin_user', JSON.stringify(normalizedUser));
 
       setAuthState({
-        user,
+        user: normalizedUser,
         token,
         isAuthenticated: true,
         isLoading: false,

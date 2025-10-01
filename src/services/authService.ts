@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://localhost:4040/api';
+const API_V1 = (import.meta as any)?.env?.VITE_API_BASE_URL || 'http://localhost:4040/api/v1'
+// Use non-versioned base for login only (strip trailing /api/v{n})
+const API_ROOT = API_V1.replace(/\/(api\/v\d+)$/i, '')
 
 export interface SuperAdminCredentials {
   email: string;
@@ -33,10 +35,10 @@ export interface SuperAdminRefreshResponse {
 export const superAdminAuthService = {
   async login(credentials: SuperAdminCredentials): Promise<SuperAdminLoginResponse> {
     try {
-      console.log('Making API call to:', `${API_BASE_URL}/admin/login`);
+      console.log('Making API call to:', `${API_ROOT}/api/admin/user/login`);
       console.log('Request body:', credentials);
       
-      const response = await fetch(`${API_BASE_URL}/admin/login`, {
+      const response = await fetch(`${API_ROOT}/api/admin/user/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,7 +73,7 @@ export const superAdminAuthService = {
   async testConnection(): Promise<void> {
     try {
       console.log('Testing API connection...');
-      const response = await fetch(`${API_BASE_URL}/admin/login`, {
+      const response = await fetch(`${API_ROOT}/api/admin/user/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -88,7 +90,7 @@ export const superAdminAuthService = {
   },
 
   async refreshToken(token: string): Promise<SuperAdminRefreshResponse> {
-    const response = await fetch(`${API_BASE_URL}/admin/refresh`, {
+    const response = await fetch(`${API_V1}/admin/refresh`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,

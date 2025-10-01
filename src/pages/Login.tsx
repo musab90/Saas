@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSuperAdminAuthContext } from '@/contexts/AuthContext';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -20,6 +20,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 const SuperAdminLogin: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const { login, isAuthenticated, isLoading } = useSuperAdminAuthContext();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -35,10 +36,13 @@ const SuperAdminLogin: React.FC = () => {
   }
 
   const onSubmit = async (data: LoginFormData) => {
-    await login({
+    const ok = await login({
       email: data.email,
       password: data.password,
     });
+    if (ok) {
+      navigate('/dashboard', { replace: true });
+    }
   };
 
   return (
@@ -50,10 +54,10 @@ const SuperAdminLogin: React.FC = () => {
               <LogIn className="w-6 h-6 text-white" />
             </div>
             <CardTitle className="text-2xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 dark:from-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
-              Superadmin Access
+              Welcome to the ABC Technology
             </CardTitle>
             <CardDescription className="text-slate-600 dark:text-slate-400">
-              Sign in to access the superadmin dashboard
+              Sign in to access the System
             </CardDescription>
           </CardHeader>
           

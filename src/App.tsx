@@ -9,6 +9,7 @@ import SuperAdminLogin from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Tenants from "./pages/Tenants";
 import Subscriptions from "./pages/Subscriptions";
+import SubscriptionPlans from "./pages/SubscriptionPlans";
 import Finance from "./pages/Finance";
 import Customers from "./pages/Customers";
 import ApiKeys from "./pages/ApiKeys";
@@ -50,6 +51,14 @@ const App = () => (
               element={
                 <PrivateRoute>
                   <Subscriptions />
+                </PrivateRoute>
+              } 
+            />
+            <Route 
+              path="/subscription-plans" 
+              element={
+                <PrivateRoute>
+                  <SubscriptionPlans />
                 </PrivateRoute>
               } 
             />

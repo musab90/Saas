@@ -34,14 +34,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Search, Plus, MoreHorizontal, Eye, Edit, UserMinus } from "lucide-react"
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { fetchAllTenants, createTenant, invalidateTenantsCache, type Tenant } from "@/services/tenantsService"
 
 // Helper function to get status variant
 const getStatusVariant = (status: string) => {
-  switch (status) {
+  const value = (status || "").toLowerCase()
+  switch (value) {
     case "active":
       return "success"
     case "trial":
+    case "trail":
       return "info"
     case "suspended":
       return "error"
@@ -50,58 +53,58 @@ const getStatusVariant = (status: string) => {
   }
 }
 
-const mockTenants = [
-  {
-    id: 1,
-    name: "Acme Corporation",
-    email: "admin@acme.com",
-    createdDate: "2024-01-15",
-    plan: "Enterprise",
-    status: "active",
-    users: 45
-  },
-  {
-    id: 2,
-    name: "TechStart Inc",
-    email: "contact@techstart.com",
-    createdDate: "2024-02-20",
-    plan: "Professional",
-    status: "active",
-    users: 12
-  },
-  {
-    id: 3,
-    name: "DataFlow Ltd",
-    email: "info@dataflow.co",
-    createdDate: "2024-01-08",
-    plan: "Starter",
-    status: "suspended",
-    users: 5
-  },
-  {
-    id: 4,
-    name: "CloudTech Pro",
-    email: "hello@cloudtech.com",
-    createdDate: "2024-03-12",
-    plan: "Enterprise",
-    status: "active",
-    users: 89
-  },
-  {
-    id: 5,
-    name: "RetailX",
-    email: "support@retailx.com",
-    createdDate: "2024-02-28",
-    plan: "Professional",
-    status: "trial",
-    users: 8
-  }
-]
+// Format dates as: 01 MAY 2025
+const formatDisplayDate = (value: string): string => {
+  if (!value) return ""
+  const date = new Date(value)
+  if (isNaN(date.getTime())) return value
+  const day = String(date.getDate()).padStart(2, "0")
+  const month = date.toLocaleString("en-US", { month: "short" }).toUpperCase()
+  const year = String(date.getFullYear())
+  return `${day} ${month} ${year}`
+}
+
+// Remote tenants state
+const useTenantsData = () => {
+  const [tenants, setTenants] = useState<Tenant[]>([])
+  const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string>("")
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const { signal } = controller
+
+    const load = async () => {
+      setIsLoading(true)
+      setError("")
+      try {
+        console.log("[TenantsPage] Loading tenants...")
+        const data = await fetchAllTenants(signal)
+        console.log("[TenantsPage] Tenants loaded", { count: data.length })
+        setTenants(data)
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          console.error("[TenantsPage] Load error", err)
+          setError(err?.message || "Failed to load tenants")
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    load()
+    return () => controller.abort()
+  }, [])
+
+  return { tenants, isLoading, error, setTenants }
+}
 
 const Tenants = () => {
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [planFilter, setPlanFilter] = useState("all")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
   const [selectedTenant, setSelectedTenant] = useState<any>(null)
   const [viewModalOpen, setViewModalOpen] = useState(false)
   const [editModalOpen, setEditModalOpen] = useState(false)
@@ -110,7 +113,7 @@ const Tenants = () => {
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
-    plan: "",
+    planName: "",
     status: "",
     users: 0
   })
@@ -118,28 +121,38 @@ const Tenants = () => {
   const [createForm, setCreateForm] = useState({
     name: "",
     email: "",
-    plan: "Starter",
-    status: "trial",
+    planName: "Trail",
+    status: "trail",
     users: 1
   })
   const [formErrors, setFormErrors] = useState<{[key: string]: string}>({})
   const [isCreating, setIsCreating] = useState(false)
 
+  const { tenants, isLoading, error, setTenants } = useTenantsData()
+
   // Filter tenants based on search term and filters
   const filteredTenants = useMemo(() => {
-    return mockTenants.filter((tenant) => {
+    return tenants.filter((tenant) => {
       const matchesSearch = 
         tenant.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         tenant.email.toLowerCase().includes(searchTerm.toLowerCase())
       
-      const matchesStatus = statusFilter === "all" || tenant.status === statusFilter
+      const matchesStatus = statusFilter === "all" || (tenant.status || "").toLowerCase() === statusFilter.toLowerCase()
       
       const matchesPlan = planFilter === "all" || 
         tenant.plan.toLowerCase() === planFilter.toLowerCase()
       
       return matchesSearch && matchesStatus && matchesPlan
     })
-  }, [searchTerm, statusFilter, planFilter])
+  }, [searchTerm, statusFilter, planFilter, tenants])
+
+  const paginatedTenants = useMemo(() => {
+    const start = (page - 1) * pageSize
+    const end = start + pageSize
+    return filteredTenants.slice(start, end)
+  }, [filteredTenants, page, pageSize])
+
+  const totalPages = Math.max(1, Math.ceil(filteredTenants.length / pageSize))
 
   // Handler functions for actions
   const handleViewDetails = (tenant: any) => {
@@ -152,7 +165,7 @@ const Tenants = () => {
     setEditForm({
       name: tenant.name,
       email: tenant.email,
-      plan: tenant.plan,
+      planName: tenant.plan,
       status: tenant.status,
       users: tenant.users
     })
@@ -198,13 +211,11 @@ const Tenants = () => {
       errors.email = "Please enter a valid email address"
     }
     
-    if (!createForm.plan) {
+    if (!createForm.planName) {
       errors.plan = "Please select a plan"
     }
     
-    if (createForm.users < 1) {
-      errors.users = "Number of users must be at least 1"
-    }
+    
     
     setFormErrors(errors)
     return Object.keys(errors).length === 0
@@ -218,27 +229,34 @@ const Tenants = () => {
     setIsCreating(true)
     
     try {
-      // Here you would typically make an API call to create the tenant
-      console.log("Creating tenant:", createForm)
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
+      const newTenant = await createTenant({
+        name: createForm.name,
+        email: createForm.email,
+        planName: createForm.planName,
+        status: createForm.status,
+      })
+      // Update local list immediately
+      setTenants(prev => [newTenant, ...prev])
+      // Invalidate cache and refetch to ensure fresh, fully-populated data
+      try {
+        invalidateTenantsCache()
+        const fresh = await fetchAllTenants()
+        setTenants(fresh)
+      } catch {}
       // Reset form and close modal
       setCreateForm({
         name: "",
         email: "",
-        plan: "Starter",
-        status: "trial",
+        planName: "Trail",
+        status: "trail",
         users: 1
       })
       setFormErrors({})
       setCreateModalOpen(false)
       
-      // You could also add the new tenant to mockTenants array here for demo purposes
-      
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating tenant:", error)
+      alert(error?.message || "Failed to create tenant")
     } finally {
       setIsCreating(false)
     }
@@ -248,8 +266,8 @@ const Tenants = () => {
     setCreateForm({
       name: "",
       email: "",
-      plan: "Starter",
-      status: "trial",
+      planName: "Trail",
+      status: "trail",
       users: 1
     })
     setFormErrors({})
@@ -291,10 +309,10 @@ const Tenants = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="trial">Trial</SelectItem>
-                    <SelectItem value="suspended">Suspended</SelectItem>
+                    <SelectItem value="all">all status</SelectItem>
+                    <SelectItem value="active">active</SelectItem>
+                    <SelectItem value="trail">trail</SelectItem>
+                    <SelectItem value="suspended">suspended</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={planFilter} onValueChange={setPlanFilter}>
@@ -303,8 +321,10 @@ const Tenants = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Plans</SelectItem>
-                    <SelectItem value="starter">Starter</SelectItem>
+                    <SelectItem value="trail">Trail</SelectItem>
                     <SelectItem value="professional">Professional</SelectItem>
+                    <SelectItem value="pro +">Pro +</SelectItem>
+                    <SelectItem value="standard">Standard</SelectItem>
                     <SelectItem value="enterprise">Enterprise</SelectItem>
                   </SelectContent>
                 </Select>
@@ -325,14 +345,26 @@ const Tenants = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTenants.length === 0 ? (
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-8 text-center">
+                      Loading tenants...
+                    </TableCell>
+                  </TableRow>
+                ) : error ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-8 text-center text-red-600">
+                      {error}
+                    </TableCell>
+                  </TableRow>
+                ) : filteredTenants.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No tenants found matching your criteria.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredTenants.map((tenant) => (
+                  paginatedTenants.map((tenant) => (
                     <TableRow key={tenant.id}>
                       <TableCell className="font-medium">{tenant.name}</TableCell>
                       <TableCell>{tenant.email}</TableCell>
@@ -345,7 +377,7 @@ const Tenants = () => {
                           {tenant.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>{tenant.createdDate}</TableCell>
+                      <TableCell>{formatDisplayDate(tenant.createdDate)}</TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -377,6 +409,33 @@ const Tenants = () => {
                 )}
               </TableBody>
             </Table>
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-muted-foreground">
+                Showing {(filteredTenants.length === 0) ? 0 : ((page - 1) * pageSize + 1)}-
+                {Math.min(page * pageSize, filteredTenants.length)} of {filteredTenants.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                  <SelectTrigger className="w-[90px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="5">5</SelectItem>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
+                    Prev
+                  </Button>
+                  <span className="text-sm">Page {page} / {totalPages}</span>
+                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -418,7 +477,7 @@ const Tenants = () => {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Created Date</label>
-                    <p className="text-lg">{selectedTenant.createdDate}</p>
+                    <p className="text-lg">{formatDisplayDate(selectedTenant.createdDate)}</p>
                   </div>
                 </div>
               </div>
@@ -460,13 +519,15 @@ const Tenants = () => {
                 </div>
                 <div>
                   <label className="text-sm font-medium">Plan</label>
-                  <Select value={editForm.plan} onValueChange={(value) => setEditForm({...editForm, plan: value})}>
+                  <Select value={editForm.planName} onValueChange={(value) => setEditForm({...editForm, planName: value})}>
                     <SelectTrigger className="mt-1">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Starter">Starter</SelectItem>
+                      <SelectItem value="Trail">Trail</SelectItem>
                       <SelectItem value="Professional">Professional</SelectItem>
+                      <SelectItem value="Pro +">Pro +</SelectItem>
+                      <SelectItem value="Standard">Standard</SelectItem>
                       <SelectItem value="Enterprise">Enterprise</SelectItem>
                     </SelectContent>
                   </Select>
@@ -478,21 +539,13 @@ const Tenants = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="trial">Trial</SelectItem>
-                      <SelectItem value="suspended">Suspended</SelectItem>
+                      <SelectItem value="active">active</SelectItem>
+                      <SelectItem value="trail">trail</SelectItem>
+                      <SelectItem value="suspended">suspended</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <label className="text-sm font-medium">Users</label>
-                  <Input
-                    type="number"
-                    value={editForm.users}
-                    onChange={(e) => setEditForm({...editForm, users: parseInt(e.target.value) || 0})}
-                    className="mt-1"
-                  />
-                </div>
+                
               </div>
             </div>
             <DialogFooter>
@@ -649,17 +702,19 @@ const Tenants = () => {
                       Plan *
                     </label>
                     <Select 
-                      value={createForm.plan} 
-                      onValueChange={(value) => setCreateForm({...createForm, plan: value})}
+                      value={createForm.planName} 
+                      onValueChange={(value) => setCreateForm({...createForm, planName: value})}
                     >
                       <SelectTrigger className={`h-9 ${formErrors.plan ? "border-red-300 focus:border-red-500" : ""}`}>
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Starter">Starter</SelectItem>
-                        <SelectItem value="Professional">Professional</SelectItem>
-                        <SelectItem value="Enterprise">Enterprise</SelectItem>
-                      </SelectContent>
+                    <SelectContent>
+                      <SelectItem value="Trail">Trail</SelectItem>
+                      <SelectItem value="Professional">Professional</SelectItem>
+                      <SelectItem value="Pro +">Pro +</SelectItem>
+                      <SelectItem value="Standard">Standard</SelectItem>
+                      <SelectItem value="Enterprise">Enterprise</SelectItem>
+                    </SelectContent>
                     </Select>
                     {formErrors.plan && (
                       <p className="text-xs text-red-600 mt-1">{formErrors.plan}</p>
@@ -677,30 +732,15 @@ const Tenants = () => {
                       <SelectTrigger className="h-9">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="trial">Trial</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="suspended">Suspended</SelectItem>
-                      </SelectContent>
+                    <SelectContent>
+                      <SelectItem value="trail">trail</SelectItem>
+                      <SelectItem value="active">active</SelectItem>
+                      <SelectItem value="suspended">suspended</SelectItem>
+                    </SelectContent>
                     </Select>
                   </div>
                   
-                  <div className="w-full sm:w-32">
-                    <label htmlFor="create-users" className="text-xs font-medium text-gray-700 block mb-1">
-                      Users *
-                    </label>
-                    <Input
-                      id="create-users"
-                      type="number"
-                      min="1"
-                      value={createForm.users}
-                      onChange={(e) => setCreateForm({...createForm, users: parseInt(e.target.value) || 1})}
-                      className={`h-9 ${formErrors.users ? "border-red-300 focus:border-red-500" : ""}`}
-                    />
-                    {formErrors.users && (
-                      <p className="text-xs text-red-600 mt-1">{formErrors.users}</p>
-                    )}
-                  </div>
+                  
                 </div>
               </div>
 
@@ -709,16 +749,24 @@ const Tenants = () => {
                 <h4 className="text-sm font-semibold text-blue-900 mb-2">Plan Details</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-blue-700">
                   <div>
-                    <p className="font-medium">Starter</p>
-                    <p>Basic features, up to 10 users</p>
+                    <p className="font-medium">Trail</p>
+                    <p>Evaluate features during the trial period</p>
                   </div>
                   <div>
                     <p className="font-medium">Professional</p>
-                    <p>Advanced features, up to 100 users</p>
+                    <p>Advanced features for growing teams</p>
+                  </div>
+                  <div>
+                    <p className="font-medium">Pro +</p>
+                    <p>Everything in Professional plus premium add-ons</p>
+                  </div>
+                  <div>
+                    <p className="font-medium">Standard</p>
+                    <p>Core features for small teams</p>
                   </div>
                   <div>
                     <p className="font-medium">Enterprise</p>
-                    <p>All features, unlimited users</p>
+                    <p>All features and enterprise support</p>
                   </div>
                 </div>
               </div>

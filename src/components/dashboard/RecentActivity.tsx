@@ -76,6 +76,7 @@ export function RecentActivity() {
               )}
               
               <Badge 
+                variant="outline"
                 className={`status-badge ${
                   activity.status === "success" ? "status-active" :
                   activity.status === "warning" ? "status-pending" :
